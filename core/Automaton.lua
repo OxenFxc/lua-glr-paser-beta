@@ -8,9 +8,10 @@ local Grammar = require("core.Grammar")
 local Item = require("core.Item")
 local State = require("core.State")
 
-function Automaton:new(grammar)
+function Automaton:new(grammar, verbose)
     local self = setmetatable({}, Automaton)
     self.grammar = grammar
+    self.verbose = verbose or false
     self.states = {}          -- 状态列表
     self.state_map = {}       -- state_key -> state_id，用于检测重复状态
     self.start_state = nil
@@ -18,7 +19,9 @@ function Automaton:new(grammar)
 end
 
 function Automaton:build()
-    print("Building LR automaton...")
+    if self.verbose then
+        print("Building LR automaton...")
+    end
 
     -- 计算FIRST和FOLLOW集
     self.grammar:compute_first_sets()
@@ -42,7 +45,9 @@ function Automaton:build()
     local max_queue_iterations = 1000  -- 防止状态队列无限循环
     local start_time = os.clock()
 
-    print("Starting state graph construction...")
+    if self.verbose then
+        print("Starting state graph construction...")
+    end
 
     while #state_queue > 0 and queue_iterations < max_queue_iterations do
         queue_iterations = queue_iterations + 1
@@ -54,7 +59,7 @@ function Automaton:build()
         processed[state_id] = true
 
         -- 每50次迭代输出一次调试信息
-        if queue_iterations % 50 == 0 then
+        if self.verbose and queue_iterations % 50 == 0 then
             print(string.format("Processed %d states, %d remaining in queue", queue_iterations, #state_queue))
         end
 
@@ -116,7 +121,9 @@ function Automaton:build()
     -- 状态队列处理结束
     self:monitor_loop_performance("State Graph Construction", start_time, queue_iterations, #self.states, max_queue_iterations)
 
-    print(string.format("Built automaton with %d states", #self.states))
+    if self.verbose then
+        print(string.format("Built automaton with %d states", #self.states))
+    end
     return self.states
 end
 
@@ -149,14 +156,16 @@ function Automaton:compute_closure(items)
     local initial_item_count = #closure_items
     local start_time = os.clock()
 
-    print(string.format("Starting closure computation with %d initial items", initial_item_count))
+    if self.verbose then
+        print(string.format("Starting closure computation with %d initial items", initial_item_count))
+    end
 
     while changed and iterations < max_iterations do
         changed = false
         iterations = iterations + 1
 
         -- 每10次迭代输出一次调试信息
-        if iterations % 10 == 0 then
+        if self.verbose and iterations % 10 == 0 then
             print(string.format("Closure iteration %d: %d items", iterations, #closure_items))
         end
 
@@ -257,14 +266,14 @@ function Automaton:compute_closure(items)
                     table.insert(item.lookaheads, sym)
                 end
                 terminal_fixes = terminal_fixes + 1
-                if old_count ~= #item.lookaheads then
+                if self.verbose and old_count ~= #item.lookaheads then
                     print(string.format("   Fixed %s: %d -> %d lookaheads", item:to_string(), old_count, #item.lookaheads))
                 end
             end
         end
     end
 
-    if terminal_fixes > 0 then
+    if self.verbose and terminal_fixes > 0 then
         print(string.format("✅ Applied terminal lookahead fixes to %d items", terminal_fixes))
     end
 
@@ -275,7 +284,7 @@ function Automaton:compute_lookahead(item, prod)
     -- 对于LR(1)项 A -> α • B β {L}，新项 B -> • γ 的lookahead是 FIRST(β L)
 
     -- 调试：记录函数调用
-    if prod[1] == "F" and prod[2] == "num" then
+    if self.verbose and prod[1] == "F" and prod[2] == "num" then
         local debug_file = io.open("debug_compute_lookahead.log", "a")
         if debug_file then
             debug_file:write(string.format("compute_lookahead called: item=%s, prod={%s}\n",
@@ -352,12 +361,14 @@ function Automaton:monitor_loop_performance(operation_name, start_time, iteratio
         print("   - Deep recursion in grammar rules")
         print(string.rep("!", 50))
     else
-        print(string.format("📊 %s Performance:", operation_name))
-        print(string.format("   Iterations: %d", iterations))
-        print(string.format("   Final item count: %d", item_count))
-        print(string.format("   Duration: %.4f seconds", duration))
-        if iterations > 0 then
-            print(string.format("   Average time per iteration: %.6f seconds", duration / iterations))
+        if self.verbose then
+            print(string.format("📊 %s Performance:", operation_name))
+            print(string.format("   Iterations: %d", iterations))
+            print(string.format("   Final item count: %d", item_count))
+            print(string.format("   Duration: %.4f seconds", duration))
+            if iterations > 0 then
+                print(string.format("   Average time per iteration: %.6f seconds", duration / iterations))
+            end
         end
     end
 end
