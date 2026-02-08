@@ -1,155 +1,138 @@
-# GLR Parser in Lua 5.3
+# Lua GLR Parser (通用LR解析器)
 
-这是一个完整的模块化GLR（Generalized Left-to-right Rightmost derivation）解析器项目，用纯Lua 5.3实现。
+这是一个用纯 Lua 5.3 实现的模块化 GLR (Generalized Left-to-right Rightmost derivation) 解析器。它支持多种文法类型，包括自定义的 Lua 子集（带有 `global` 关键字扩展）、数学表达式以及简单的编程语言结构。此外，它还支持从解析树重建源代码（Rendering）。
 
-## ✨ 项目特点
+## ✨ 主要特性
 
-- ✅ **模块化设计**：清晰的代码组织结构
-- ✅ **纯Lua实现**：仅使用原生库，无外部依赖
-- ✅ **完整GLR算法**：支持LR自动机构建
-- ✅ **多分词器支持**：内置多种分词器
-- ✅ **FIRST/FOLLOW集计算**：完整的文法分析
-- ✅ **解析树生成**：结构化输出
+- **纯 Lua 实现**：仅依赖 Lua 5.3+ 原生库，无外部依赖。
+- **模块化架构**：清晰的代码组织，便于扩展和维护。
+- **多种文法支持**：
+    - ✅ **Lua 扩展文法**：支持标准 Lua 语法子集，并增加了 `global` 关键字。
+    - ✅ **数学表达式**：支持基本的算术运算和优先级。
+    - ✅ **简单文法**：用于测试和演示的基本递归文法。
+    - ✅ **编程语言文法**：通用的编程语言结构示例。
+- **GLR 算法**：能够处理二义性文法（通过生成解析森林，尽管目前主要展示单一解析树）。
+- **源代码重建 (Rendering)**：支持将解析树还原为源代码，可用于代码格式化或转换工具的基础。
+- **自动机构建**：完整的 LR(1) 自动机生成，包含 FIRST/FOLLOW 集计算。
+
+## 🚀 快速开始
+
+### 环境要求
+
+- Lua 5.3 或更高版本。
+- Git (用于克隆仓库)。
+
+### 安装与验证
+
+1.  克隆本仓库：
+    ```bash
+    git clone https://github.com/your-username/lua-glr-parser.git
+    cd lua-glr-parser
+    ```
+
+2.  运行验证脚本（将自动拉取 Lua 源码并编译，运行测试）：
+    ```bash
+    ./setup_and_verify.sh
+    ```
+
+### 命令行使用 (CLI)
+
+项目提供了一个强大的命令行工具 `run_parser.lua`，用于解析文件或生成还原代码。
+
+**基本用法：**
+
+```bash
+lua run_parser.lua [--render|-r] [grammar_type] <input_file> [output_file]
+```
+
+**参数说明：**
+
+- `--render` / `-r`：可选。如果指定，将输出从解析树重建的源代码（而不是解析树结构）。
+- `grammar_type`：指定使用的文法类型。
+    - `lua` (默认)：Lua 扩展文法。
+    - `math`：数学表达式文法。
+    - `simple`：简单测试文法。
+    - `programming`：通用编程语言文法。
+- `input_file`：输入源代码文件路径。
+- `output_file`：可选。输出结果的文件路径。如果不指定，将打印到标准输出。
+
+**示例：**
+
+1.  **解析 Lua 文件并打印解析树：**
+    ```bash
+    lua run_parser.lua lua test_parser_features.lua
+    ```
+
+2.  **解析 Lua 文件并还原代码 (Rendering)：**
+    ```bash
+    lua run_parser.lua --render lua test_parser_features.lua output.lua
+    ```
+    *(注：如果你没有系统安装 Lua，请使用 `./tmp_lua/lua` 代替 `lua`，前提是运行过 `setup_and_verify.sh`)*
+
+### 库使用 (API)
+
+你也可以在 Lua 代码中直接使用本解析器。
+
+```lua
+local GLR = require("GLR")
+
+-- 1. 创建解析器实例 (例如使用 Lua 文法)
+local parser = GLR.create_lua_grammar()
+
+-- 2. 构建自动机
+parser:build()
+
+-- 3. 解析输入代码
+local code = [[
+local function fact(n)
+    if n == 0 then return 1 else return n * fact(n-1) end
+end
+]]
+local success, result = pcall(function() return parser:parse(code) end)
+
+if success and result then
+    -- 4. 打印解析树
+    parser:print_tree(result[1])
+
+    -- 5. 还原源代码
+    print("\nRendered Code:")
+    print(parser:render(result[1]))
+else
+    print("Parse Failed")
+end
+```
+
+更多示例请参考 `final_demo.lua` 和 `reproduce_global.lua`。
 
 ## 📁 项目结构
 
 ```
-GLR Parser Project/
-├── GLR.lua                 # 主入口模块
-├── final_demo.lua          # 最终演示脚本
-├── core/                   # 核心模块
-│   ├── Grammar.lua        # 文法定义和分析
-│   ├── Item.lua           # LR项管理
-│   ├── State.lua          # LR状态管理
-│   └── Automaton.lua      # 自动机构建
-├── parsing/                # 解析模块
-│   ├── Parser.lua         # GLR解析算法
-│   └── Stack.lua          # 栈管理
-└── utils/                  # 工具模块
-    ├── Utils.lua          # 通用工具函数
-    └── Tokenizer.lua      # 分词器
+.
+├── core/                   # 核心解析逻辑
+│   ├── Grammar.lua        # 文法定义
+│   ├── LuaGrammar.lua     # Lua 文法具体实现
+│   ├── Automaton.lua      # 自动机构建
+│   └── ...
+├── parsing/                # 解析运行时
+│   ├── Parser.lua         # GLR 解析器实现
+│   └── ...
+├── utils/                  # 工具类
+│   ├── Tokenizer.lua      # 分词器
+│   └── ...
+├── GLR.lua                 # 主入口文件
+├── run_parser.lua          # 命令行工具
+├── setup_and_verify.sh     # 环境安装与验证脚本
+├── test_parser_features.lua# 测试用例
+├── CONTRIBUTING.md         # 贡献指南
+├── CODE_OF_CONDUCT.md      # 行为准则
+├── LICENSE                 # 许可证
+└── README.md               # 项目文档
 ```
 
-## 🚀 快速开始
+## 🤝 贡献 (Contributing)
 
-### 基本使用
+欢迎提交 Issue 和 Pull Request！详细信息请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-```lua
-local GLR = require("GLR")
+## 📜 许可证 (License)
 
--- 创建解析器
-local parser = GLR.new()
-
--- 定义文法
-parser:add_production("S", {"a", "S"})
-parser:add_production("S", {"a"})
-
--- 构建自动机
-parser:build()
-
--- 解析输入
-local result = parser:parse("a a a")
-if result then
-    parser:print_tree(result[1])
-end
-```
-
-### 算术表达式
-
-```lua
-local GLR = require("GLR")
-
--- 使用预定义算术表达式文法
-local parser = GLR.create_math_grammar()
-parser:build()
-
-local result = parser:parse("1 + 2 * 3")
-if result then
-    parser:print_tree(result[1])
-end
-```
-
-### 自定义分词器
-
-```lua
-local GLR = require("GLR")
-local parser = GLR.new()
-
--- 使用编程语言分词器
-parser:use_programming_tokenizer()
-
--- 或者使用数学表达式分词器
-parser:use_math_tokenizer()
-```
-
-## 📋 支持的文法类型
-
-- ✅ 简单递归文法（如 `S -> a S | a`）
-- ✅ 算术表达式文法
-- 🔄 编程语言文法（基础支持）
-- 🔄 二义性文法（部分支持）
-
-## 🎯 核心功能
-
-### 文法分析
-- FIRST集计算
-- FOLLOW集计算
-- 自动机构建
-- 状态优化
-
-### 解析算法
-- LR项生成
-- 状态转换
-- 规约操作
-- 移进操作
-- 解析树构建
-
-### 分词器
-- 简单分词器
-- 数学表达式分词器
-- 编程语言分词器
-- 自定义分词器支持
-
-## 🧪 测试结果
-
-运行演示：
-```bash
-lua final_demo.lua
-```
-
-### 测试覆盖
-- ✅ 简单文法解析
-- ✅ 基本算术表达式
-- ✅ 分词器功能
-- ✅ 模块化架构
-
-## 🔧 技术实现
-
-- **语言**：Lua 5.3
-- **架构**：模块化设计
-- **算法**：GLR解析算法
-- **数据结构**：LR自动机
-- **分词**：正则表达式 + 状态机
-
-## 🎨 代码质量
-
-- 清晰的模块分离
-- 详细的注释文档
-- 统一的命名规范
-- 完整的错误处理
-- 高效的数据结构
-
-## 📈 性能特点
-
-- 自动机一次性构建
-- 状态压缩优化
-- 栈空间重用
-- 内存使用优化
-
-## 🔮 未来扩展
-
-- [ ] 完整的二义性文法支持
-- [ ] 错误恢复机制
-- [ ] 增量解析
-- [ ] 语法高亮支持
-- [ ] IDE集成
+本项目采用 MIT 许可证。详情请参阅 [LICENSE](LICENSE) 文件。
