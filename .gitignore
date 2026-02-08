@@ -1,0 +1,6 @@
+tmp_lua/
+*.o
+*.a
+output.txt
+output.lua
+.DS_Store
