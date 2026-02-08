@@ -144,8 +144,12 @@ end
 
 function Automaton:compute_closure(items)
     local closure_items = {}
+    local core_map = {} -- map: core_key -> item
+
     for _, item in ipairs(items) do
-        table.insert(closure_items, item:clone())
+        local newItem = item:clone()
+        table.insert(closure_items, newItem)
+        core_map[newItem:to_core_key()] = newItem
     end
 
     local changed = true
@@ -169,7 +173,7 @@ function Automaton:compute_closure(items)
             print(string.format("Closure iteration %d: %d items", iterations, #closure_items))
         end
 
-        local new_items = {}
+        local potential_new_items = {}
 
         for _, item in ipairs(closure_items) do
             local next_symbol = item:next_symbol()
@@ -180,22 +184,8 @@ function Automaton:compute_closure(items)
                 for _, prod in ipairs(productions) do
                     -- 计算lookahead
                     local lookaheads = self:compute_lookahead(item, prod)
-
                     local new_item = Item:new(prod, 0, lookaheads)
-
-                    -- 检查是否已存在
-                    local exists = false
-                    for _, existing in ipairs(closure_items) do
-                        if existing:equals(new_item) then
-                            exists = true
-                            break
-                        end
-                    end
-
-                    if not exists then
-                        table.insert(new_items, new_item)
-                        changed = true
-                    end
+                    table.insert(potential_new_items, new_item)
                 end
             elseif not next_symbol and item:is_complete() then
                 -- 处理完整的项：查找引用此非终结符的产生式
@@ -220,20 +210,7 @@ function Automaton:compute_closure(items)
                                     end
 
                                     local new_item = Item:new(new_prod, i-1, lookaheads)
-
-                                    -- 检查是否已存在
-                                    local exists = false
-                                    for _, existing in ipairs(closure_items) do
-                                        if existing:equals(new_item) then
-                                            exists = true
-                                            break
-                                        end
-                                    end
-
-                                    if not exists then
-                                        table.insert(new_items, new_item)
-                                        changed = true
-                                    end
+                                    table.insert(potential_new_items, new_item)
                                     break -- 只为每个产生式创建一个项
                                 end
                             end
@@ -243,9 +220,20 @@ function Automaton:compute_closure(items)
             end
         end
 
-        -- 添加新项到闭包
-        for _, item in ipairs(new_items) do
-            table.insert(closure_items, item)
+        -- 合并新项到闭包
+        for _, newItem in ipairs(potential_new_items) do
+            local key = newItem:to_core_key()
+            local existing = core_map[key]
+
+            if existing then
+                if existing:merge_lookaheads(newItem) then
+                    changed = true
+                end
+            else
+                table.insert(closure_items, newItem)
+                core_map[key] = newItem
+                changed = true
+            end
         end
     end
 
@@ -283,19 +271,13 @@ end
 function Automaton:compute_lookahead(item, prod)
     -- 对于LR(1)项 A -> α • B β {L}，新项 B -> • γ 的lookahead是 FIRST(β L)
 
-    -- 调试：记录函数调用
-    if self.verbose and prod[1] == "F" and prod[2] == "num" then
-        local debug_file = io.open("debug_compute_lookahead.log", "a")
-        if debug_file then
-            debug_file:write(string.format("compute_lookahead called: item=%s, prod={%s}\n",
-                item:to_string(), table.concat(prod, ", ")))
-            debug_file:close()
-        end
-    end
-
     -- 获取β（点后的符号）
+    -- item.production = {lhs, rhs1, rhs2, ...}
+    -- dot_position indicates index in RHS (0-based) before which dot is placed.
+    -- dot=0: before rhs1 (index 2). B is rhs1. beta starts at rhs2 (index 3).
+    -- dot=k: before rhs(k+1) (index k+2). B is rhs(k+1). beta starts at rhs(k+2) (index k+3).
     local beta = {}
-    local next_pos = item.dot_position + 2
+    local next_pos = item.dot_position + 3
     if next_pos <= #item.production then
         for i = next_pos, #item.production do
             table.insert(beta, item.production[i])

@@ -47,7 +47,10 @@ function Parser:parse(input)
     local i = 1
     while i <= #tokens do
         local token = tokens[i]
-        self:log("Processing token %d/%d: %s", i, #tokens, token)
+        local token_type = type(token) == "table" and token.type or token
+        local token_value = type(token) == "table" and token.value or token
+
+        self:log("Processing token %d/%d: %s", i, #tokens, token_type)
         self:log("Current stacks: %d", glr_stack:size())
 
         if self.verbose then
@@ -87,11 +90,11 @@ function Parser:parse(input)
             end
 
             -- 尝试移进 (Add result to NEXT glr_stack)
-            if current_state.transitions[token] then
-                local target_state_id = current_state.transitions[token]
+            if current_state.transitions[token_type] then
+                local target_state_id = current_state.transitions[token_type]
                 self:log("  Shift to state %d", target_state_id)
                 local new_stack = current_stack:clone()
-                local node = {type = "terminal", value = token}
+                local node = {type = "terminal", value = token_value, symbol = token_type}
                 new_stack:push(target_state_id, node)
 
                 if not next_glr_stack:has_stack(new_stack) then
@@ -105,7 +108,7 @@ function Parser:parse(input)
             j = j + 1
         end
 
-        if token == "$" then
+        if token_type == "$" then
             -- Reached end of input. The current glr_stack (which contains results of reductions)
             -- holds the final states. We don't need to shift $.
             break
@@ -114,10 +117,10 @@ function Parser:parse(input)
         -- Error handling if no stack could process the token (shift)
         if next_glr_stack:size() == 0 then
             -- 检查是否是终结符（不是$）
-            if token ~= "$" then
-                self:log("  ERROR: No transition for token '%s'", token)
+            if token_type ~= "$" then
+                self:log("  ERROR: No transition for token '%s'", token_type)
                 if self.verbose then
-                    print(string.format("Syntax Error at token %d ('%s')", i, token))
+                    print(string.format("Syntax Error at token %d ('%s')", i, token_value))
                 end
 
                 -- Panic Mode Recovery
@@ -131,8 +134,10 @@ function Parser:parse(input)
                 local k = i
                 while k <= #self.tokens do
                     local next_token = self.tokens[k]
-                    if sync_tokens[next_token] then
-                        self:log("  Found sync token '%s' at %d", next_token, k)
+                    local next_token_type = type(next_token) == "table" and next_token.type or next_token
+
+                    if sync_tokens[next_token_type] then
+                        self:log("  Found sync token '%s' at %d", next_token_type, k)
 
                         -- Try to find a stack that can shift this token
                         local best_recovered_stack = nil
@@ -143,7 +148,7 @@ function Parser:parse(input)
                             while temp_stack:size() > 0 do
                                 local top_state_id = temp_stack:top().state_id
                                 local top_state = self.states[top_state_id + 1]
-                                if top_state.transitions[next_token] then
+                                if top_state.transitions[next_token_type] then
                                     self:log("  Stack recovered at state %d", top_state_id)
                                     if not best_recovered_stack or temp_stack:size() > best_recovered_stack:size() then
                                         best_recovered_stack = temp_stack
@@ -165,7 +170,7 @@ function Parser:parse(input)
                 end
 
                 if not recovery_success then
-                    self:log("  Panic mode failed, skipping token '%s'", token)
+                    self:log("  Panic mode failed, skipping token '%s'", token_type)
                     for _, s in ipairs(glr_stack.stacks) do
                          next_glr_stack:add_stack(s)
                     end
@@ -183,7 +188,7 @@ function Parser:parse(input)
         glr_stack = next_glr_stack
 
         if glr_stack:size() == 0 then
-            return nil, string.format("Parse error at token %d (%s)", i, token)
+            return nil, string.format("Parse error at token %d (%s)", i, token_type)
         end
 
         i = next_loop_index
@@ -239,6 +244,8 @@ function Parser:get_possible_reductions(stack, lookahead)
     local state = self.states[top_entry.state_id + 1]
     local complete_items = state:get_complete_items()
 
+    local lookahead_type = type(lookahead) == "table" and lookahead.type or lookahead
+
     -- Debug reductions
     if self.verbose and #complete_items > 0 then
         print(string.format("    State %d has %d complete items. Total items: %d", top_entry.state_id, #complete_items, #state.items))
@@ -251,14 +258,14 @@ function Parser:get_possible_reductions(stack, lookahead)
         -- 检查lookahead是否在当前项的lookahead集合中
         local valid_lookahead = false
         for _, la in ipairs(item.lookaheads) do
-            if la == lookahead or la == "$" then
+            if la == lookahead_type or la == "$" then
                 valid_lookahead = true
                 break
             end
         end
 
         -- 如果没有找到匹配的lookahead，但这是结束标记，尝试所有规约
-        if not valid_lookahead and lookahead == "$" then
+        if not valid_lookahead and lookahead_type == "$" then
             valid_lookahead = true
         end
 
@@ -325,8 +332,9 @@ function Parser:tokenize(input)
     -- 默认分词器，按空格分割
     local tokens = {}
     for word in string.gmatch(input, "%S+") do
-        table.insert(tokens, word)
+        table.insert(tokens, {type=word, value=word})
     end
+    table.insert(tokens, {type="$", value="$"})
     return tokens
 end
 
