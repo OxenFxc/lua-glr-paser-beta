@@ -1,0 +1,59 @@
+name: Lua Parser Workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      lua_code:
+        description: 'Lua Code to Parse'
+        required: true
+        type: string
+        default: |
+          global x = 10
+          global function test() return end
+      grammar_type:
+        description: 'Grammar Type'
+        required: true
+        default: 'lua'
+        type: choice
+        options:
+          - lua
+          - math
+          - simple
+          - programming
+
+jobs:
+  parse:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Cache Lua Build
+        id: cache-lua
+        uses: actions/cache@v3
+        with:
+          path: lua_build
+          key: lua-5.5-v1
+
+      - name: Build Lua
+        if: steps.cache-lua.outputs.cache-hit != 'true'
+        run: |
+          echo "Cloning Lua..."
+          git clone https://github.com/lua/lua.git lua_temp
+          cd lua_temp
+          make all
+          cd ..
+          mkdir -p lua_build
+          cp lua_temp/lua lua_build/
+          rm -rf lua_temp
+
+      - name: Create Input File
+        env:
+          LUA_CODE: ${{ inputs.lua_code }}
+        run: |
+          printf "%s" "$LUA_CODE" > input.lua
+
+      - name: Run Parser
+        run: |
+          chmod +x lua_build/lua
+          ./lua_build/lua run_parser.lua ${{ inputs.grammar_type }} input.lua

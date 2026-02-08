@@ -268,7 +268,8 @@ function Tokenizer.create_programming()
         ["for"] = "for", ["in"] = "in", ["function"] = "function", ["end"] = "end",
         ["local"] = "local", ["return"] = "return", ["break"] = "break", ["goto"] = "goto",
         ["true"] = "true", ["false"] = "false", ["nil"] = "nil",
-        ["and"] = "and", ["or"] = "or", ["not"] = "not"
+        ["and"] = "and", ["or"] = "or", ["not"] = "not",
+        ["global"] = "global"
     }
 
     tokenizer:add_keyword_rule(keywords)
