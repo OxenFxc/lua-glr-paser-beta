@@ -11,12 +11,21 @@ local Tokenizer = require("utils.Tokenizer")
 local Utils = require("utils.Utils")
 
 -- 创建GLR解析器实例
-function GLR.new()
+function GLR.new(verbose)
     local self = setmetatable({}, {__index = GLR})
     self.grammar = Grammar:new()
-    self.parser = Parser:new(self.grammar)
+    self.parser = Parser:new(self.grammar, verbose)
     self.tokenizer = Tokenizer.create_simple()
     return self
+end
+
+function GLR:set_verbose(verbose)
+    if self.parser then
+        self.parser.verbose = verbose
+        if self.parser.automaton then
+            self.parser.automaton.verbose = verbose
+        end
+    end
 end
 
 -- 添加产生式
@@ -127,7 +136,9 @@ end
 
 -- 构建自动机
 function GLR:build()
-    print("Building GLR parser...")
+    if self.parser.verbose then
+        print("Building GLR parser...")
+    end
     local success, err = pcall(function()
         self.parser:build_automaton()
     end)
@@ -136,7 +147,9 @@ function GLR:build()
         error("Failed to build automaton: " .. err)
     end
 
-    print("GLR parser built successfully")
+    if self.parser.verbose then
+        print("GLR parser built successfully")
+    end
     return self
 end
 
@@ -146,7 +159,9 @@ function GLR:parse(input)
         self:build()
     end
 
-    print("Parsing input: " .. input)
+    if self.parser.verbose then
+        print("Parsing input: " .. input)
+    end
     local success, result, err = pcall(function()
         return self.parser:parse(input)
     end)
@@ -162,21 +177,31 @@ function GLR:parse(input)
     return result
 end
 
--- 打印解析树
-function GLR:print_tree(tree, indent)
-    indent = indent or ""
-    if type(tree) == "table" and tree.type == "terminal" then
-        print(indent .. tree.value)
-    elseif type(tree) == "table" and tree.type == "nonterminal" then
-        print(indent .. tree.symbol)
-        if tree.children then
-            for _, child in ipairs(tree.children) do
-                self:print_tree(child, indent .. "  ")
+-- 将解析树转换为字符串
+function GLR:tree_to_string(tree)
+    local lines = {}
+    local function traverse(node, indent)
+        indent = indent or ""
+        if type(node) == "table" and node.type == "terminal" then
+            table.insert(lines, indent .. node.value)
+        elseif type(node) == "table" and node.type == "nonterminal" then
+            table.insert(lines, indent .. node.symbol)
+            if node.children then
+                for _, child in ipairs(node.children) do
+                    traverse(child, indent .. "  ")
+                end
             end
+        else
+            table.insert(lines, indent .. tostring(node))
         end
-    else
-        print(indent .. tostring(tree))
     end
+    traverse(tree, "")
+    return table.concat(lines, "\n")
+end
+
+-- 打印解析树
+function GLR:print_tree(tree)
+    print(self:tree_to_string(tree))
 end
 
 -- 打印所有解析树

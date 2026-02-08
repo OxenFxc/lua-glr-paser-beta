@@ -12,9 +12,9 @@ local GLRStack = StackModule.GLRStack
 function Parser:new(grammar, verbose)
     local self = setmetatable({}, Parser)
     self.grammar = grammar
-    self.automaton = Automaton:new(grammar)
-    self.states = nil
     self.verbose = verbose or false
+    self.automaton = Automaton:new(grammar, self.verbose)
+    self.states = nil
     return self
 end
 
