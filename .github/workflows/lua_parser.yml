@@ -56,4 +56,10 @@ jobs:
       - name: Run Parser
         run: |
           chmod +x lua_build/lua
-          ./lua_build/lua run_parser.lua ${{ inputs.grammar_type }} input.lua
+          ./lua_build/lua run_parser.lua ${{ inputs.grammar_type }} input.lua output.txt
+
+      - name: Upload Result
+        uses: actions/upload-artifact@v3
+        with:
+          name: parse-result
+          path: output.txt
