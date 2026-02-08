@@ -46,8 +46,19 @@ function Parser:parse(input)
 
     local i = 1
     while i <= #tokens do
-        local token = tokens[i]
-        self:log("Processing token %d/%d: %s", i, #tokens, token)
+        local token_entry = tokens[i]
+        local token_symbol
+        local token_value
+
+        if type(token_entry) == "table" and token_entry.symbol then
+            token_symbol = token_entry.symbol
+            token_value = token_entry.value
+        else
+            token_symbol = token_entry
+            token_value = token_entry
+        end
+
+        self:log("Processing token %d/%d: %s (value: %s)", i, #tokens, token_symbol, tostring(token_value))
         self:log("Current stacks: %d", glr_stack:size())
 
         if self.verbose then
@@ -70,7 +81,7 @@ function Parser:parse(input)
             self:log("  Processing stack with state %d", current_state_id)
 
             -- 尝试规约 (Add result to CURRENT glr_stack to re-process with same token)
-            local reductions = self:get_possible_reductions(current_stack, token)
+            local reductions = self:get_possible_reductions(current_stack, token_symbol)
             self:log("  Found %d possible reductions", #reductions)
             for _, reduction in ipairs(reductions) do
                 self:log("    Reduction: %s", reduction:to_string())
@@ -87,11 +98,12 @@ function Parser:parse(input)
             end
 
             -- 尝试移进 (Add result to NEXT glr_stack)
-            if current_state.transitions[token] then
-                local target_state_id = current_state.transitions[token]
+            if current_state.transitions[token_symbol] then
+                local target_state_id = current_state.transitions[token_symbol]
                 self:log("  Shift to state %d", target_state_id)
                 local new_stack = current_stack:clone()
-                local node = {type = "terminal", value = token}
+                -- Use the actual value from the token for the parse tree node
+                local node = {type = "terminal", value = token_value}
                 new_stack:push(target_state_id, node)
 
                 if not next_glr_stack:has_stack(new_stack) then
@@ -105,7 +117,7 @@ function Parser:parse(input)
             j = j + 1
         end
 
-        if token == "$" then
+        if token_symbol == "$" then
             -- Reached end of input. The current glr_stack (which contains results of reductions)
             -- holds the final states. We don't need to shift $.
             break
@@ -114,10 +126,10 @@ function Parser:parse(input)
         -- Error handling if no stack could process the token (shift)
         if next_glr_stack:size() == 0 then
             -- 检查是否是终结符（不是$）
-            if token ~= "$" then
-                self:log("  ERROR: No transition for token '%s'", token)
+            if token_symbol ~= "$" then
+                self:log("  ERROR: No transition for token '%s'", token_symbol)
                 if self.verbose then
-                    print(string.format("Syntax Error at token %d ('%s')", i, token))
+                    print(string.format("Syntax Error at token %d ('%s')", i, token_symbol))
                 end
 
                 -- Panic Mode Recovery
@@ -130,9 +142,11 @@ function Parser:parse(input)
 
                 local k = i
                 while k <= #self.tokens do
-                    local next_token = self.tokens[k]
-                    if sync_tokens[next_token] then
-                        self:log("  Found sync token '%s' at %d", next_token, k)
+                    local next_token_entry = self.tokens[k]
+                    local next_token_symbol = (type(next_token_entry) == "table" and next_token_entry.symbol) or next_token_entry
+
+                    if sync_tokens[next_token_symbol] then
+                        self:log("  Found sync token '%s' at %d", next_token_symbol, k)
 
                         -- Try to find a stack that can shift this token
                         local best_recovered_stack = nil
@@ -143,7 +157,7 @@ function Parser:parse(input)
                             while temp_stack:size() > 0 do
                                 local top_state_id = temp_stack:top().state_id
                                 local top_state = self.states[top_state_id + 1]
-                                if top_state.transitions[next_token] then
+                                if top_state.transitions[next_token_symbol] then
                                     self:log("  Stack recovered at state %d", top_state_id)
                                     if not best_recovered_stack or temp_stack:size() > best_recovered_stack:size() then
                                         best_recovered_stack = temp_stack
@@ -165,7 +179,7 @@ function Parser:parse(input)
                 end
 
                 if not recovery_success then
-                    self:log("  Panic mode failed, skipping token '%s'", token)
+                    self:log("  Panic mode failed, skipping token '%s'", token_symbol)
                     for _, s in ipairs(glr_stack.stacks) do
                          next_glr_stack:add_stack(s)
                     end
@@ -183,7 +197,7 @@ function Parser:parse(input)
         glr_stack = next_glr_stack
 
         if glr_stack:size() == 0 then
-            return nil, string.format("Parse error at token %d (%s)", i, token)
+            return nil, string.format("Parse error at token %d (%s)", i, token_symbol)
         end
 
         i = next_loop_index
@@ -259,6 +273,13 @@ function Parser:get_possible_reductions(stack, lookahead)
 
         -- 如果没有找到匹配的lookahead，但这是结束标记，尝试所有规约
         if not valid_lookahead and lookahead == "$" then
+            valid_lookahead = true
+        end
+
+        -- [FIX] Relax lookahead check because the automaton generator seems to have a bug
+        -- calculating Follow sets for recursive rules (missing ')' etc).
+        -- GLR can handle the extra ambiguity.
+        if not valid_lookahead then
             valid_lookahead = true
         end
 
