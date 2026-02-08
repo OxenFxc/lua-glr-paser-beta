@@ -9,12 +9,19 @@ local StackModule = require("parsing.Stack")
 local Stack = StackModule.Stack
 local GLRStack = StackModule.GLRStack
 
-function Parser:new(grammar)
+function Parser:new(grammar, verbose)
     local self = setmetatable({}, Parser)
     self.grammar = grammar
     self.automaton = Automaton:new(grammar)
     self.states = nil
+    self.verbose = verbose or false
     return self
+end
+
+function Parser:log(fmt, ...)
+    if self.verbose then
+        print(string.format(fmt, ...))
+    end
 end
 
 function Parser:build_automaton()
@@ -28,6 +35,7 @@ function Parser:parse(input)
     end
 
     local tokens = self:tokenize(input)
+    self.tokens = tokens
     -- 注意：结束标记"$"应该由分词器添加
 
     -- 初始化GLR栈
@@ -36,138 +44,161 @@ function Parser:parse(input)
     initial_stack:push(0, nil)  -- 初始状态
     glr_stack:add_stack(initial_stack)
 
-    for i, token in ipairs(tokens) do
-        print(string.format("Processing token %d/%d: %s", i, #tokens, token))
-        print(string.format("Current stacks: %d", glr_stack:size()))
-        for j, stack in ipairs(glr_stack.stacks) do
-            print(string.format("  Stack %d: %s", j, stack:to_string()))
+    local i = 1
+    while i <= #tokens do
+        local token = tokens[i]
+        self:log("Processing token %d/%d: %s", i, #tokens, token)
+        self:log("Current stacks: %d", glr_stack:size())
+
+        if self.verbose then
+            for j, stack in ipairs(glr_stack.stacks) do
+                self:log("  Stack %d: %s", j, stack:to_string())
+            end
         end
 
-        local new_glr_stack = GLRStack:new()
+        local next_glr_stack = GLRStack:new()
+        local token_processed_by_any_stack = false
+        local next_loop_index = i + 1 -- Default next token
 
-        -- 对每个当前栈进行处理
-        for _, current_stack in ipairs(glr_stack.stacks) do
+        -- 使用while循环遍历当前栈（支持动态添加规约产生的栈）
+        local j = 1
+        while j <= glr_stack:size() do
+            local current_stack = glr_stack:get_stack(j)
             local current_state_id = current_stack:top().state_id
             local current_state = self.states[current_state_id + 1]
 
-            print(string.format("  Processing stack with state %d", current_state_id))
+            self:log("  Processing stack with state %d", current_state_id)
 
-            -- 先尝试规约，再尝试移进
-            local has_reductions = false
-
-            -- 尝试规约
+            -- 尝试规约 (Add result to CURRENT glr_stack to re-process with same token)
             local reductions = self:get_possible_reductions(current_stack, token)
-            print(string.format("  Found %d possible reductions", #reductions))
+            self:log("  Found %d possible reductions", #reductions)
             for _, reduction in ipairs(reductions) do
-                print(string.format("    Reduction: %s", reduction:to_string()))
+                self:log("    Reduction: %s", reduction:to_string())
                 local reduced_stack = self:perform_reduction(current_stack, reduction)
                 if reduced_stack then
-                    print(string.format("    Reduced to state %d", reduced_stack:top().state_id))
-                    if not new_glr_stack:has_stack(reduced_stack) then
-                        new_glr_stack:add_stack(reduced_stack)
-                        has_reductions = true
+                    self:log("    Reduced to state %d", reduced_stack:top().state_id)
+                    if not glr_stack:has_stack(reduced_stack) then
+                        glr_stack:add_stack(reduced_stack)
+                        token_processed_by_any_stack = true
                     end
                 else
-                    print("    Reduction failed")
+                    self:log("    Reduction failed")
                 end
             end
 
-            -- 尝试移进
+            -- 尝试移进 (Add result to NEXT glr_stack)
             if current_state.transitions[token] then
                 local target_state_id = current_state.transitions[token]
-                print(string.format("  Shift to state %d", target_state_id))
-                print(string.format("  Target state exists: %s", self.states[target_state_id + 1] and "yes" or "no"))
+                self:log("  Shift to state %d", target_state_id)
                 local new_stack = current_stack:clone()
                 local node = {type = "terminal", value = token}
                 new_stack:push(target_state_id, node)
 
-                if not new_glr_stack:has_stack(new_stack) then
-                    new_glr_stack:add_stack(new_stack)
+                if not next_glr_stack:has_stack(new_stack) then
+                    next_glr_stack:add_stack(new_stack)
+                    token_processed_by_any_stack = true
                 end
             else
-                print("  No shift transition for token")
+                self:log("  No shift transition for token")
             end
 
-        -- 如果没有规约也没有移进，检查是否是错误状态
-        if not has_reductions and not current_state.transitions[token] then
+            j = j + 1
+        end
+
+        if token == "$" then
+            -- Reached end of input. The current glr_stack (which contains results of reductions)
+            -- holds the final states. We don't need to shift $.
+            break
+        end
+
+        -- Error handling if no stack could process the token (shift)
+        if next_glr_stack:size() == 0 then
             -- 检查是否是终结符（不是$）
             if token ~= "$" then
-                print(string.format("  ERROR: No transition for token '%s' in state %d", token, current_state_id))
+                self:log("  ERROR: No transition for token '%s'", token)
+                if self.verbose then
+                    print(string.format("Syntax Error at token %d ('%s')", i, token))
+                end
 
-                -- 改进的错误恢复策略
+                -- Panic Mode Recovery
                 local recovery_success = false
+                local sync_tokens = {
+                    [";"]=true, ["end"]=true, ["else"]=true,
+                    ["elseif"]=true, ["until"]=true, ["$"]=true,
+                    [")"]=true, ["}"]=true, ["]"]=true
+                }
 
-                -- 策略1: 尝试插入缺失的同步token
-                if token == "+" or token == "-" or token == "*" or token == "/" then
-                    print("  Attempting error recovery by inserting missing operator")
+                local k = i
+                while k <= #self.tokens do
+                    local next_token = self.tokens[k]
+                    if sync_tokens[next_token] then
+                        self:log("  Found sync token '%s' at %d", next_token, k)
 
-                    -- 查找可能的同步点（括号、分号等）
-                    local sync_tokens = {")", ";", "end"}
-                    for _, sync_token in ipairs(sync_tokens) do
-                        if current_state.transitions[sync_token] then
-                            print(string.format("  Found sync token '%s', attempting recovery", sync_token))
-                            -- 这里可以实现更复杂的同步恢复逻辑
-                            recovery_success = true
-                            break
+                        -- Try to find a stack that can shift this token
+                        local best_recovered_stack = nil
+
+                        for _, stack_check in ipairs(glr_stack.stacks) do
+                            local temp_stack = stack_check:clone()
+                            -- Pop states until we find one that accepts the sync token
+                            while temp_stack:size() > 0 do
+                                local top_state_id = temp_stack:top().state_id
+                                local top_state = self.states[top_state_id + 1]
+                                if top_state.transitions[next_token] then
+                                    self:log("  Stack recovered at state %d", top_state_id)
+                                    if not best_recovered_stack or temp_stack:size() > best_recovered_stack:size() then
+                                        best_recovered_stack = temp_stack
+                                    end
+                                    break
+                                end
+                                temp_stack:pop()
+                            end
+                        end
+
+                        if best_recovered_stack then
+                             next_glr_stack:add_stack(best_recovered_stack)
+                             recovery_success = true
+                             next_loop_index = k -- Jump to sync token
+                             break
                         end
                     end
+                    k = k + 1
                 end
 
-                -- 策略2: 跳过当前token并继续（原有策略）
                 if not recovery_success then
-                    print("  Attempting error recovery by skipping token")
-                    -- 检查是否可以跳过多个token到达同步点
-                    local tokens_ahead = {}
-                    local token_index = current_token_index
-                    while token_index <= #self.tokens and #tokens_ahead < 3 do
-                        if self.tokens[token_index] ~= token then -- 跳过当前错误token
-                            table.insert(tokens_ahead, self.tokens[token_index])
-                        end
-                        token_index = token_index + 1
+                    self:log("  Panic mode failed, skipping token '%s'", token)
+                    for _, s in ipairs(glr_stack.stacks) do
+                         next_glr_stack:add_stack(s)
                     end
-
-                    for _, future_token in ipairs(tokens_ahead) do
-                        if current_state.transitions[future_token] then
-                            print(string.format("  Found recovery point with token '%s'", future_token))
-                            break
-                        end
-                    end
+                    -- next_loop_index is i + 1, so we skip this token
                 end
 
-                -- 不添加任何栈，继续处理下一个token（错误恢复）
             else
-                print("  Reached end of input, keeping original stack")
-                if not new_glr_stack:has_stack(current_stack) then
-                    new_glr_stack:add_stack(current_stack)
-                end
+                self:log("  Reached end of input with error")
             end
-        end
         end
 
         -- 合并相同的栈
-        new_glr_stack:merge_stacks()
+        next_glr_stack:merge_stacks()
 
-        glr_stack = new_glr_stack
+        glr_stack = next_glr_stack
 
         if glr_stack:size() == 0 then
             return nil, string.format("Parse error at token %d (%s)", i, token)
         end
+
+        i = next_loop_index
     end
 
     -- 收集成功解析的结果
-    local results = {}
-    print(string.format("Collecting results from %d stacks", glr_stack:size()))
+    local accepted_results = {}
+    local fallback_results = {}
+    self:log("Collecting results from %d stacks", glr_stack:size())
 
     for i, stack in ipairs(glr_stack.stacks) do
-        print(string.format("Checking stack %d: size=%d", i, stack:size()))
+        self:log("Checking stack %d: size=%d", i, stack:size())
 
         -- 检查栈顶是否是接受状态
         local top_entry = stack:top()
-        if top_entry then
-            print(string.format("  Top entry: state=%d, node_type=%s",
-                       top_entry.state_id,
-                       top_entry.node and top_entry.node.type or "nil"))
-        end
 
         -- 查找包含接受状态的栈（S' -> S• 的状态）
         local has_accept_item = false
@@ -177,23 +208,25 @@ function Parser:parse(input)
                 if item.production[1] == self.grammar.start_symbol .. "'" and
                    item.dot_position == #item.production - 1 then
                     has_accept_item = true
-                    print("  Found accept item in stack")
+                    self:log("  Found accept item in stack")
                     break
                 end
             end
         end
 
         if has_accept_item and top_entry and top_entry.node then
-            print("  Adding result from stack " .. i)
-            table.insert(results, top_entry.node)
+            self:log("  Adding result from stack " .. i)
+            table.insert(accepted_results, top_entry.node)
         elseif top_entry and top_entry.node and stack:size() >= 2 then
             -- 备选方案：如果栈包含最终结果
-            print("  Adding result as fallback from stack " .. i)
-            table.insert(results, top_entry.node)
+            self:log("  Adding result as fallback from stack " .. i)
+            table.insert(fallback_results, top_entry.node)
         end
     end
 
-    print(string.format("Collected %d results", #results))
+    local results = #accepted_results > 0 and accepted_results or fallback_results
+
+    self:log("Collected %d results", #results)
     return results
 end
 
@@ -205,6 +238,14 @@ function Parser:get_possible_reductions(stack, lookahead)
 
     local state = self.states[top_entry.state_id + 1]
     local complete_items = state:get_complete_items()
+
+    -- Debug reductions
+    if self.verbose and #complete_items > 0 then
+        print(string.format("    State %d has %d complete items. Total items: %d", top_entry.state_id, #complete_items, #state.items))
+        for _, item in ipairs(state.items) do
+             print(string.format("      Item: %s (pos %d, len %d, complete? %s)", item:to_string(), item.dot_position, #item.production, tostring(item:is_complete())))
+        end
+    end
 
     for _, item in ipairs(complete_items) do
         -- 检查lookahead是否在当前项的lookahead集合中
@@ -263,24 +304,18 @@ function Parser:perform_reduction(stack, item)
     local current_state = self.states[current_state_id + 1]
 
     if not current_state then
-        print(string.format("ERROR: State %d not found", current_state_id))
+        self:log("ERROR: State %d not found", current_state_id)
         return nil
     end
 
     local goto_state_id = current_state.transitions[prod[1]]
 
     if goto_state_id then
-        print(string.format("  Goto %s -> state %d", prod[1], goto_state_id))
+        self:log("  Goto %s -> state %d", prod[1], goto_state_id)
         temp_stack:push(goto_state_id, new_node)
         return temp_stack
     else
-        print(string.format("  No goto transition for %s in state %d", prod[1], current_state_id))
-        -- 尝试查找可能的goto状态
-        for symbol, state_id in pairs(current_state.transitions) do
-            if symbol ~= "$" and self.grammar.nonterminals[symbol] then
-                print(string.format("  Found possible goto: %s -> %d", symbol, state_id))
-            end
-        end
+        self:log("  No goto transition for %s in state %d", prod[1], current_state_id)
     end
 
     return nil

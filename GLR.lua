@@ -5,6 +5,7 @@ local GLR = {}
 
 -- 导入所有模块
 local Grammar = require("core.Grammar")
+local LuaGrammar = require("core.LuaGrammar")
 local Parser = require("parsing.Parser")
 local Tokenizer = require("utils.Tokenizer")
 local Utils = require("utils.Utils")
@@ -98,7 +99,15 @@ function GLR:tokenize_programming(input)
     local values = {}
     for _, token in ipairs(tokens) do
         if token.type ~= "EOF" and token.type ~= "WHITESPACE" and token.type ~= "COMMENT" then
-            table.insert(values, token.value)
+            if token.type == "NUMBER" then
+                table.insert(values, "num")
+            elseif token.type == "IDENTIFIER" then
+                table.insert(values, "id")
+            elseif token.type == "STRING" then
+                table.insert(values, "string")
+            else
+                table.insert(values, token.value)
+            end
         end
     end
     table.insert(values, "$")  -- 添加结束标记
@@ -265,6 +274,13 @@ function GLR.create_programming_grammar()
     glr:add_production("Factor", {"num"})
     glr:add_production("Factor", {"id"})
 
+    glr:use_programming_tokenizer()
+    return glr
+end
+
+function GLR.create_lua_grammar()
+    local glr = GLR.new()
+    LuaGrammar.define(glr)
     glr:use_programming_tokenizer()
     return glr
 end

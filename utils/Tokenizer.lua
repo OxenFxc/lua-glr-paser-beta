@@ -6,12 +6,16 @@ Tokenizer.__index = Tokenizer
 
 function Tokenizer:new()
     local self = setmetatable({}, Tokenizer)
-    self.rules = {}  -- 分词规则列表 {pattern, token_type}
+    self.rules = {}  -- 分词规则列表 {pattern, type, match}
     return self
 end
 
 function Tokenizer:add_rule(pattern, token_type)
-    table.insert(self.rules, {pattern = pattern, type = token_type})
+    if type(pattern) == "function" then
+        table.insert(self.rules, {match = pattern, type = token_type})
+    else
+        table.insert(self.rules, {pattern = pattern, type = token_type})
+    end
 end
 
 function Tokenizer:add_simple_rules()
@@ -27,11 +31,28 @@ function Tokenizer:add_simple_rules()
     self:add_rule(";", "SEMICOLON")
 end
 
-function Tokenizer:add_keyword(keyword)
-    -- 为关键字添加规则（需要转义特殊字符）
-    local escaped = keyword:gsub("[%(%)%.%%%+%-%*%?%[%]%^%$]", "%%%1")
-    self:add_rule("^" .. escaped .. "%s*", keyword:upper())
+-- Generic function to add a rule that checks keywords
+function Tokenizer:add_keyword_rule(keywords)
+    self:add_rule(function(input, pos)
+        local s, e = input:find("^%a[%w_]*", pos)
+        if not s then return nil end
+
+        local id = input:sub(s, e)
+        -- Check if it is a keyword
+        -- keywords table can be set or list. If list, convert to set?
+        -- Assuming keywords is a map: keyword -> type
+        if keywords[id] then
+            return keywords[id], id, e + 1
+        elseif keywords[id:upper()] then
+             -- Try uppercase check if keywords are stored as uppercase?
+             -- Usually Lua keywords are case sensitive.
+             return keywords[id:upper()], id, e + 1
+        else
+            return "IDENTIFIER", id, e + 1
+        end
+    end)
 end
+
 
 function Tokenizer:add_number_rule()
     -- 添加数字规则
@@ -48,6 +69,43 @@ function Tokenizer:add_whitespace_rule()
     self:add_rule("^%s+", "WHITESPACE")
 end
 
+-- Lua-style long string matcher: [=*[ ... ]=*]
+function Tokenizer.match_long_string(input, pos)
+    local s, e = input:find("^%[=*%[", pos)
+    if not s then return nil end
+
+    local equals = input:sub(s + 1, e - 1)
+    local close = "]" .. equals .. "]"
+
+    local cs, ce = input:find(close, e + 1, true)
+    if not cs then
+        error("Unclosed long string/comment starting at " .. pos)
+    end
+
+    return input:sub(s, ce), ce + 1
+end
+
+-- Lua-style string literal matcher (short strings)
+function Tokenizer.match_string_literal(input, pos)
+    local s, e = input:find("^[\"']", pos)
+    if not s then return nil end
+
+    local quote = input:sub(s, e)
+    local current = e + 1
+    while current <= #input do
+        local char = input:sub(current, current)
+        if char == quote then
+            return input:sub(s, current), current + 1
+        elseif char == "\\" then
+            current = current + 2 -- Skip escaped char
+        else
+            current = current + 1
+        end
+    end
+
+    error("Unclosed string literal starting at " .. pos)
+end
+
 function Tokenizer:tokenize(input)
     local tokens = {}
     local pos = 1
@@ -56,26 +114,57 @@ function Tokenizer:tokenize(input)
         local matched = false
 
         for _, rule in ipairs(self.rules) do
-            local pattern = rule.pattern
-            local token_type = rule.type
+            if rule.match then
+                -- Function based matcher
+                -- Expected return: (type, value, new_pos) OR (value, new_pos)
+                local r1, r2, r3 = rule.match(input, pos)
 
-            local start_pos, end_pos = input:find(pattern, pos)
-
-            if start_pos == pos then
-                local matched_text = input:sub(start_pos, end_pos)
-
-                -- 跳过空白字符
-                if token_type ~= "WHITESPACE" then
-                    table.insert(tokens, {
-                        type = token_type,
-                        value = matched_text,
-                        position = pos
-                    })
+                local token_type, value, new_pos
+                if r3 then
+                    token_type = r1
+                    value = r2
+                    new_pos = r3
+                elseif r2 then
+                    token_type = rule.type
+                    value = r1
+                    new_pos = r2
                 end
 
-                pos = end_pos + 1
-                matched = true
-                break
+                if value then
+                    if token_type ~= "WHITESPACE" and token_type ~= "COMMENT" then
+                        table.insert(tokens, {
+                            type = token_type,
+                            value = value,
+                            position = pos
+                        })
+                    end
+                    pos = new_pos
+                    matched = true
+                    break
+                end
+            else
+                -- Regex based matcher
+                local pattern = rule.pattern
+                local token_type = rule.type
+
+                local start_pos, end_pos = input:find(pattern, pos)
+
+                if start_pos == pos then
+                    local matched_text = input:sub(start_pos, end_pos)
+
+                    -- 跳过空白字符
+                    if token_type ~= "WHITESPACE" and token_type ~= "COMMENT" then
+                        table.insert(tokens, {
+                            type = token_type,
+                            value = matched_text,
+                            position = pos
+                        })
+                    end
+
+                    pos = end_pos + 1
+                    matched = true
+                    break
+                end
             end
         end
 
@@ -88,7 +177,7 @@ function Tokenizer:tokenize(input)
     -- 添加结束标记
     table.insert(tokens, {
         type = "EOF",
-        value = "",
+        value = "$",  -- Use '$' as EOF value for compatibility with Parser
         position = #input + 1
     })
 
@@ -120,34 +209,69 @@ function Tokenizer.create_programming()
     local tokenizer = Tokenizer:new()
     tokenizer:add_whitespace_rule()
 
-    -- 关键字（必须在标识符之前）
-    local keywords = {"if", "then", "else", "while", "for", "function", "end",
-                     "local", "return", "true", "false", "nil", "and", "or", "not"}
-    for _, keyword in ipairs(keywords) do
-        tokenizer:add_keyword(keyword)
-    end
+    -- Comments (Short and Long)
+    -- Must be before simple rules because -- starts with -
+    tokenizer:add_rule(function(input, pos)
+        -- Check for long comment --[[ ... ]]
+        local s, e = input:find("^%-%-%[=*%[", pos)
+        if s then
+            -- Reimplement long string logic to find the end
+            local equals = input:match("^%-%-%[(=*)%[", pos)
+            local close = "]" .. equals .. "]"
+            local cs, ce = input:find(close, e + 1, true)
+            if not cs then error("Unclosed long comment") end
+            return "COMMENT", input:sub(s, ce), ce + 1
+        end
+
+        -- Check for short comment -- ...
+        local s2, e2 = input:find("^%-%-[^\n]*", pos)
+        if s2 then
+            return "COMMENT", input:sub(s2, e2), e2 + 1
+        end
+        return nil
+    end)
 
     -- 运算符（按长度降序排列）
+    tokenizer:add_rule("%.%.%.", "DOTS") -- ...
+    tokenizer:add_rule("%.%.", "CONCAT") -- ..
     tokenizer:add_rule("==", "EQUALS_EQUALS")
     tokenizer:add_rule("~=", "NOT_EQUALS")
     tokenizer:add_rule("<=", "LESS_EQUALS")
     tokenizer:add_rule(">=", "GREATER_EQUALS")
     tokenizer:add_rule("<", "LESS")
     tokenizer:add_rule(">", "GREATER")
+
+    -- Other Lua operators/symbols
+    tokenizer:add_rule("%[", "[")
+    tokenizer:add_rule("%]", "]")
+    tokenizer:add_rule("{", "{")
+    tokenizer:add_rule("}", "}")
+    tokenizer:add_rule("#", "#")
+    tokenizer:add_rule(":", ":")
+    tokenizer:add_rule(",", ",")
+    tokenizer:add_rule("%.", ".") -- .
+
+    -- Simple rules (including - and ;)
     tokenizer:add_simple_rules()
 
     -- 字符串字面量
     tokenizer:add_rule("^\"[^\"]*\"", "STRING")
     tokenizer:add_rule("^'[^']*'", "STRING")
 
-    -- 注释
-    tokenizer:add_rule("^%-%-[^\n]*", "COMMENT")
-
-    -- 数字（在标识符之前）
+    -- 数字
     tokenizer:add_number_rule()
 
-    -- 标识符（最后匹配）
-    tokenizer:add_identifier_rule()
+    -- 关键字和标识符
+    local keywords = {
+        ["if"] = "if", ["then"] = "then", ["else"] = "else", ["elseif"] = "elseif",
+        ["while"] = "while", ["do"] = "do", ["repeat"] = "repeat", ["until"] = "until",
+        ["for"] = "for", ["in"] = "in", ["function"] = "function", ["end"] = "end",
+        ["local"] = "local", ["return"] = "return", ["break"] = "break", ["goto"] = "goto",
+        ["true"] = "true", ["false"] = "false", ["nil"] = "nil",
+        ["and"] = "and", ["or"] = "or", ["not"] = "not"
+    }
+
+    tokenizer:add_keyword_rule(keywords)
 
     return tokenizer
 end
