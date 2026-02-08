@@ -20,6 +20,11 @@ on:
           - math
           - simple
           - programming
+      render_output:
+        description: 'Render Output (Restore Code)'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   parse:
@@ -56,7 +61,11 @@ jobs:
       - name: Run Parser
         run: |
           chmod +x lua_build/lua
-          ./lua_build/lua run_parser.lua ${{ inputs.grammar_type }} input.lua output.txt
+          RENDER_FLAG=""
+          if [ "${{ inputs.render_output }}" == "true" ]; then
+            RENDER_FLAG="--render"
+          fi
+          ./lua_build/lua run_parser.lua $RENDER_FLAG ${{ inputs.grammar_type }} input.lua output.txt
 
       - name: Upload Result
         uses: actions/upload-artifact@v4

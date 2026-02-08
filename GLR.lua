@@ -42,7 +42,7 @@ function GLR:set_tokenizer(tokenizer)
         local values = {}
         for _, token in ipairs(tokens) do
             if token.type ~= "EOF" then
-                table.insert(values, token.value)
+                table.insert(values, {symbol = token.value, value = token.value})
             end
         end
         return values
@@ -60,7 +60,7 @@ function GLR:use_simple_tokenizer()
         local values = {}
         for _, token in ipairs(tokens) do
             if token.type ~= "EOF" and token.type ~= "WHITESPACE" then
-                table.insert(values, token.value)
+                table.insert(values, {symbol = token.value, value = token.value})
             end
         end
         table.insert(values, "$")  -- 添加结束标记
@@ -82,9 +82,9 @@ function GLR:tokenize_math(input)
         if token.type ~= "EOF" and token.type ~= "WHITESPACE" then
             -- 将数字token映射为"num"
             if token.type == "NUMBER" then
-                table.insert(values, "num")
+                table.insert(values, {symbol = "num", value = token.value})
             else
-                table.insert(values, token.value)
+                table.insert(values, {symbol = token.value, value = token.value})
             end
         end
     end
@@ -109,13 +109,13 @@ function GLR:tokenize_programming(input)
     for _, token in ipairs(tokens) do
         if token.type ~= "EOF" and token.type ~= "WHITESPACE" and token.type ~= "COMMENT" then
             if token.type == "NUMBER" then
-                table.insert(values, "num")
+                table.insert(values, {symbol = "num", value = token.value})
             elseif token.type == "IDENTIFIER" then
-                table.insert(values, "id")
+                table.insert(values, {symbol = "id", value = token.value})
             elseif token.type == "STRING" then
-                table.insert(values, "string")
+                table.insert(values, {symbol = "string", value = token.value})
             else
-                table.insert(values, token.value)
+                table.insert(values, {symbol = token.value, value = token.value})
             end
         end
     end
@@ -197,6 +197,24 @@ function GLR:tree_to_string(tree)
     end
     traverse(tree, "")
     return table.concat(lines, "\n")
+end
+
+-- 将解析树还原为源代码
+function GLR:render(tree)
+    local tokens = {}
+    local function traverse(node)
+        if type(node) == "table" then
+            if node.type == "terminal" then
+                table.insert(tokens, node.value)
+            elseif node.children then
+                for _, child in ipairs(node.children) do
+                    traverse(child)
+                end
+            end
+        end
+    end
+    traverse(tree)
+    return table.concat(tokens, " ")
 end
 
 -- 打印解析树

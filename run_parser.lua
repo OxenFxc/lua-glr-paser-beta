@@ -6,27 +6,38 @@ local GLR = require("GLR")
 local grammar_type = "lua"
 local input_file = nil
 local output_file = nil
+local do_render = false
 
 local valid_grammars = {lua=true, math=true, simple=true, programming=true}
 
-if arg[3] then
-    grammar_type = arg[1]
-    input_file = arg[2]
-    output_file = arg[3]
-elseif arg[2] then
-    if valid_grammars[arg[1]] then
-        grammar_type = arg[1]
-        input_file = arg[2]
+-- Parse flags and arguments
+local args = {}
+for i, v in ipairs(arg) do
+    if v == "--render" or v == "-r" then
+        do_render = true
     else
-        input_file = arg[1]
-        output_file = arg[2]
+        table.insert(args, v)
     end
-elseif arg[1] then
-    input_file = arg[1]
+end
+
+if args[3] then
+    grammar_type = args[1]
+    input_file = args[2]
+    output_file = args[3]
+elseif args[2] then
+    if valid_grammars[args[1]] then
+        grammar_type = args[1]
+        input_file = args[2]
+    else
+        input_file = args[1]
+        output_file = args[2]
+    end
+elseif args[1] then
+    input_file = args[1]
 end
 
 if not input_file then
-    print("Usage: lua run_parser.lua [grammar_type] <input_file> [output_file]")
+    print("Usage: lua run_parser.lua [--render|-r] [grammar_type] <input_file> [output_file]")
     os.exit(1)
 end
 
@@ -67,18 +78,25 @@ local success, result = pcall(function() return parser:parse(input) end)
 
 if success then
     if result and #result > 0 then
+        local output_content
+        if do_render then
+            output_content = parser:render(result[1])
+        else
+            output_content = parser:tree_to_string(result[1])
+        end
+
         if output_file then
             local f = io.open(output_file, "w")
             if not f then
                 print("Error: Could not open output file " .. output_file)
                 os.exit(1)
             end
-            f:write(parser:tree_to_string(result[1]))
+            f:write(output_content)
             f:close()
             print("Parse Success! Output written to " .. output_file)
         else
             print("Parse Success!")
-            parser:print_tree(result[1])
+            print(output_content)
         end
     else
          print("Parse Failed: No parse tree generated.")
