@@ -25,7 +25,12 @@ function LuaGrammar.define(glr)
     glr:add_production("stat", {"if", "exp", "then", "block", "end"})
     glr:add_production("stat", {"if", "exp", "then", "block", "else", "block", "end"})
     glr:add_production("stat", {"local", "namelist", "=", "explist"})
+    glr:add_production("stat", {"global", "namelist", "=", "explist"})
     glr:add_production("stat", {"function", "id", "funcbody"})
+    glr:add_production("stat", {"local", "function", "id", "funcbody"})
+    glr:add_production("stat", {"global", "function", "id", "funcbody"})
+    glr:add_production("stat", {"id", "(", "explist", ")"})
+    glr:add_production("stat", {"id", "(", ")"})
 
     -- retstat
     glr:add_production("retstat", {"return", "explist"})
@@ -56,6 +61,8 @@ function LuaGrammar.define(glr)
     glr:add_production("exp", {"exp", "/", "exp"})
     glr:add_production("exp", {"exp", "==", "exp"})
     glr:add_production("exp", {"(", "exp", ")"})
+    glr:add_production("exp", {"id", "(", "explist", ")"})
+    glr:add_production("exp", {"id", "(", ")"})
 
     -- funcbody
     glr:add_production("funcbody", {"(", ")", "block", "end"})
