@@ -60,10 +60,15 @@ function GLR:use_simple_tokenizer()
         local values = {}
         for _, token in ipairs(tokens) do
             if token.type ~= "EOF" and token.type ~= "WHITESPACE" then
-                table.insert(values, token.value)
+                table.insert(values, {
+                    type = token.value, -- For simple grammar, type is value
+                    value = token.value,
+                    line = token.line,
+                    column = token.column
+                })
             end
         end
-        table.insert(values, "$")  -- 添加结束标记
+        table.insert(values, {type = "$", value = "$"})  -- 添加结束标记
         return values
     end)
 
@@ -80,15 +85,21 @@ function GLR:tokenize_math(input)
     local values = {}
     for _, token in ipairs(tokens) do
         if token.type ~= "EOF" and token.type ~= "WHITESPACE" then
+            local token_obj = {
+                value = token.value,
+                line = token.line,
+                column = token.column
+            }
             -- 将数字token映射为"num"
             if token.type == "NUMBER" then
-                table.insert(values, "num")
+                token_obj.type = "num"
             else
-                table.insert(values, token.value)
+                token_obj.type = token.value
             end
+            table.insert(values, token_obj)
         end
     end
-    table.insert(values, "$")  -- 添加结束标记
+    table.insert(values, {type = "$", value = "$"})  -- 添加结束标记
     return values
 end
 
@@ -108,18 +119,24 @@ function GLR:tokenize_programming(input)
     local values = {}
     for _, token in ipairs(tokens) do
         if token.type ~= "EOF" and token.type ~= "WHITESPACE" and token.type ~= "COMMENT" then
+            local token_obj = {
+                value = token.value,
+                line = token.line,
+                column = token.column
+            }
             if token.type == "NUMBER" then
-                table.insert(values, "num")
+                token_obj.type = "num"
             elseif token.type == "IDENTIFIER" then
-                table.insert(values, "id")
+                token_obj.type = "id"
             elseif token.type == "STRING" then
-                table.insert(values, "string")
+                token_obj.type = "string"
             else
-                table.insert(values, token.value)
+                token_obj.type = token.value
             end
+            table.insert(values, token_obj)
         end
     end
-    table.insert(values, "$")  -- 添加结束标记
+    table.insert(values, {type = "$", value = "$"})  -- 添加结束标记
     return values
 end
 
@@ -197,6 +214,76 @@ function GLR:tree_to_string(tree)
     end
     traverse(tree, "")
     return table.concat(lines, "\n")
+end
+
+-- 渲染解析后的代码
+function GLR:render(tree)
+    local tokens = {}
+    local function collect(node)
+        if type(node) == "table" then
+            if node.type == "terminal" then
+                table.insert(tokens, node)
+            elseif node.children then
+                for _, child in ipairs(node.children) do
+                    collect(child)
+                end
+            end
+        end
+    end
+    collect(tree)
+
+    local output = {}
+    for i, token in ipairs(tokens) do
+        local val = token.value
+        if i > 1 then
+            local prev = tokens[i-1]
+            if self:needs_space(prev, token) then
+                table.insert(output, " ")
+            end
+        end
+        table.insert(output, val)
+    end
+    return table.concat(output)
+end
+
+function GLR:needs_space(prev, curr)
+    local p_val = prev.value
+    local c_val = curr.value
+    local p_sym = prev.symbol or p_val
+    local c_sym = curr.symbol or c_val
+
+    -- Always space after comma, semicolon
+    if p_val == "," or p_val == ";" then return true end
+
+    -- No space before comma, semicolon, closing brackets
+    if c_val == "," or c_val == ";" or c_val == ")" or c_val == "]" or c_val == "}" then return false end
+
+    -- No space after opening brackets
+    if p_val == "(" or p_val == "[" or p_val == "{" then return false end
+
+    -- No space for dot access (e.g. table.field)
+    if p_val == "." or c_val == "." then return false end
+    if p_val == ":" or c_val == ":" then return false end
+
+    -- Space between alphanumeric tokens (keywords, identifiers, numbers)
+    local function is_alnum(s)
+        return s:match("^[%w_]+$")
+    end
+
+    if is_alnum(p_val) and is_alnum(c_val) then return true end
+
+    -- Space around operators (simplified)
+    local function is_op(s)
+        return s:match("^[^%w_%s]+$")
+    end
+
+    -- If one is op and other is alnum, add space (usually good)
+    -- e.g. "a+b" vs "a + b". Let's prefer "a + b"
+    if (is_op(p_val) and is_alnum(c_val)) or (is_alnum(p_val) and is_op(c_val)) then
+        return true
+    end
+
+    return false
 end
 
 -- 打印解析树

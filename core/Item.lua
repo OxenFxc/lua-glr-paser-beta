@@ -131,4 +131,9 @@ function Item:to_key()
     return string.format("%s|%d|%s", prod_str, self.dot_position, la_str)
 end
 
+function Item:to_core_key()
+    local prod_str = table.concat(self.production, ",")
+    return string.format("%s|%d", prod_str, self.dot_position)
+end
+
 return Item
