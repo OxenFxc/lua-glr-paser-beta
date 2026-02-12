@@ -15,6 +15,7 @@ function Automaton:new(grammar, verbose)
     self.states = {}          -- 状态列表
     self.state_map = {}       -- state_key -> state_id，用于检测重复状态
     self.start_state = nil
+    self.lookahead_debug_file = nil
     return self
 end
 
@@ -120,6 +121,12 @@ function Automaton:build()
 
     -- 状态队列处理结束
     self:monitor_loop_performance("State Graph Construction", start_time, queue_iterations, #self.states, max_queue_iterations)
+
+    -- 关闭调试文件
+    if self.lookahead_debug_file then
+        self.lookahead_debug_file:close()
+        self.lookahead_debug_file = nil
+    end
 
     if self.verbose then
         print(string.format("Built automaton with %d states", #self.states))
@@ -285,11 +292,13 @@ function Automaton:compute_lookahead(item, prod)
 
     -- 调试：记录函数调用
     if self.verbose and prod[1] == "F" and prod[2] == "num" then
-        local debug_file = io.open("debug_compute_lookahead.log", "a")
+        if not self.lookahead_debug_file then
+            self.lookahead_debug_file = io.open("debug_compute_lookahead.log", "a")
+        end
+        local debug_file = self.lookahead_debug_file
         if debug_file then
             debug_file:write(string.format("compute_lookahead called: item=%s, prod={%s}\n",
                 item:to_string(), table.concat(prod, ", ")))
-            debug_file:close()
         end
     end
 
