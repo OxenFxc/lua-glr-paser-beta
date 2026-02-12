@@ -3,29 +3,53 @@
 
 local Utils = {}
 
-function Utils.deepcopy(orig)
+function Utils.deepcopy(orig, copies)
+    copies = copies or {}
     local orig_type = type(orig)
     local copy
     if orig_type == 'table' then
-        copy = {}
-        for orig_key, orig_value in next, orig, nil do
-            copy[Utils.deepcopy(orig_key)] = Utils.deepcopy(orig_value)
+        if copies[orig] then
+            copy = copies[orig]
+        else
+            copy = {}
+            copies[orig] = copy
+            for orig_key, orig_value in next, orig, nil do
+                copy[Utils.deepcopy(orig_key, copies)] = Utils.deepcopy(orig_value, copies)
+            end
+            setmetatable(copy, Utils.deepcopy(getmetatable(orig), copies))
         end
-        setmetatable(copy, Utils.deepcopy(getmetatable(orig)))
     else -- number, string, boolean, etc
         copy = orig
     end
     return copy
 end
 
-function Utils.table_equals(a, b)
+function Utils.table_equals(a, b, visited)
     if type(a) ~= type(b) then return false end
     if type(a) ~= 'table' then return a == b end
+
+    visited = visited or {}
+    if visited[a] == b then return true end
+    visited[a] = b
 
     local count_a = 0
     for k, v in pairs(a) do
         count_a = count_a + 1
-        if not Utils.table_equals(v, b[k]) then return false end
+        local found = false
+        if type(k) == 'table' then
+            -- For table keys, we need to find a matching key in b
+            for kb, vb in pairs(b) do
+                if Utils.table_equals(k, kb, visited) and Utils.table_equals(v, vb, visited) then
+                    found = true
+                    break
+                end
+            end
+        else
+            if Utils.table_equals(v, b[k], visited) then
+                found = true
+            end
+        end
+        if not found then return false end
     end
 
     local count_b = 0
