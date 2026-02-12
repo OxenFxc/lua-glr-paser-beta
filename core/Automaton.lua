@@ -283,16 +283,6 @@ end
 function Automaton:compute_lookahead(item, prod)
     -- 对于LR(1)项 A -> α • B β {L}，新项 B -> • γ 的lookahead是 FIRST(β L)
 
-    -- 调试：记录函数调用
-    if self.verbose and prod[1] == "F" and prod[2] == "num" then
-        local debug_file = io.open("debug_compute_lookahead.log", "a")
-        if debug_file then
-            debug_file:write(string.format("compute_lookahead called: item=%s, prod={%s}\n",
-                item:to_string(), table.concat(prod, ", ")))
-            debug_file:close()
-        end
-    end
-
     -- 获取β（点后的符号）
     local beta = {}
     local next_pos = item.dot_position + 2
